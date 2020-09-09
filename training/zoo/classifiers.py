@@ -70,7 +70,7 @@ encoder_params = {
         "init_op": partial(resnest200e, pretrained=True)
     },
     "resnest269e": {
-        "features": 2560,
+        "features": 2048,
         "init_op": partial(resnest269e, pretrained=True)
     }
 }
