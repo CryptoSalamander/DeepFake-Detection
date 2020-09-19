@@ -8,7 +8,6 @@ import pandas as pd
 from trustnet_utils import VideoReader, FaceExtractor, confident_strategy, predict_on_video_set
 from training.zoo.classifiers import DeepFakeClassifier
 
-test_list = list(range(36, 50)) # list(range(36, 50))
 done_list = []
 
 if __name__=="__main__":
@@ -19,7 +18,10 @@ if __name__=="__main__":
     arg('--test-dir', type=str, required=True, help="path to directory with videos")
     arg('--output', type=str, required=False, help="path to output csv", default="submission.csv")
     arg('--encoder', type=str, required=True, help="encoder", default="resnest269e")
+    arg('--range1', type=int, required=False, help="list(range($range1, $range2))", default=36)
+    arg('--range2', type=int, required=False, help="list(range($range1, $range2))", default=50)
     args = parser.parse_args()
+    test_list = list(range(args.range1, args.range2))
 
     for number in test_list:
         if number in done_list: continue
