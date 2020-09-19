@@ -18,6 +18,7 @@ if __name__=="__main__":
     arg('--test-dir', type=str, required=True, help="path to directory with videos")
     arg('--output', type=str, required=False, help="path to output csv", default="submission.csv")
     arg('--encoder', type=str, required=True, help="encoder", default="resnest269e")
+    arg('--size', type=int, required=False, help="input size", default=380)
     arg('--range1', type=int, required=False, help="list(range($range1, $range2))", default=36)
     arg('--range2', type=int, required=False, help="list(range($range1, $range2))", default=50)
     args = parser.parse_args()
@@ -45,7 +46,7 @@ if __name__=="__main__":
         video_reader = VideoReader()
         video_read_fn = lambda x: video_reader.read_frames(x, num_frames=frames_per_video)
         face_extractor = FaceExtractor(video_read_fn)
-        input_size = 380
+        input_size = args.size
         strategy = confident_strategy
         stime = time.time()
 
