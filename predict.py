@@ -21,6 +21,7 @@ if __name__=="__main__":
     arg('--size', type=int, required=False, help="input size", default=380)
     arg('--range1', type=int, required=False, help="list(range($range1, $range2))", default=36)
     arg('--range2', type=int, required=False, help="list(range($range1, $range2))", default=50)
+    arg('--num-workers', type=int, required=True, help="cpu cores", default=8)
     args = parser.parse_args()
     test_list = list(range(args.range1, args.range2))
 
@@ -54,7 +55,7 @@ if __name__=="__main__":
         print("Predicting {} videos".format(len(test_videos)))
         predictions = predict_on_video_set(face_extractor=face_extractor, input_size=input_size, models=models,
                                            strategy=strategy, frames_per_video=frames_per_video, videos=test_videos,
-                                           num_workers=16, test_dir=test_dir)
+                                           num_workers=args.num_workers, test_dir=test_dir)
         submission_df = pd.DataFrame({"filename": test_videos, "label": predictions})
         submission_df.to_csv(output, index=False)
         print("Elapsed:", time.time() - stime)
