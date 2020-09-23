@@ -5,13 +5,13 @@ import torch
 from timm.models import skresnext50_32x4d
 from timm.models.dpn import dpn92, dpn131
 from timm.models.efficientnet import tf_efficientnet_b4_ns, tf_efficientnet_b3_ns, \
-    tf_efficientnet_b5_ns, tf_efficientnet_b2_ns, tf_efficientnet_b6_ns, tf_efficientnet_b7_ns
+    tf_efficientnet_b5_ns, tf_efficientnet_b2_ns, tf_efficientnet_b6_ns
 from timm.models.resnest import resnest200e, resnest269e
 from torch import nn
 from torch.nn.modules.dropout import Dropout
 from torch.nn.modules.linear import Linear
 from torch.nn.modules.pooling import AdaptiveAvgPool2d
-
+from geffnet import tf_efficientnet_b7_ns
 encoder_params = {
     "dpn92": {
         "features": 2688,
@@ -55,7 +55,7 @@ encoder_params = {
     },
     "tf_efficientnet_b7_ns": {
         "features": 2560,
-        "init_op": partial(tf_efficientnet_b7_ns, pretrained=True, drop_path_rate=0.2)
+        "init_op": partial(tf_efficientnet_b7_ns, pretrained=True, exportable=True)
     },
     "tf_efficientnet_b6_ns_04d": {
         "features": 2304,
