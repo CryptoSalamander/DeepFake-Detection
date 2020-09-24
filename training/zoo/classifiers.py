@@ -170,7 +170,7 @@ class DeepFakeClassifier(nn.Module):
         self.fc = Linear(encoder_params[encoder]["features"], 1)
 
     def forward(self, x):
-        x = self.encoder.forward_features(x)
+        x = self.encoder.features(x)
         x = self.avg_pool(x).flatten(1)
         x = self.dropout(x)
         x = self.fc(x)
