@@ -233,6 +233,11 @@ int main(int argc, char* argv[]) {
   auto trt_network = common::infer_object(trt_builder->createNetworkV2(explicitBatch));
   auto trt_parser  = common::infer_object(nvonnxparser::createParser(
                                       *trt_network, trt_logger));
+  auto input = trt_network->addInput("input0", nvinfer1::DataType::kINT32, nvinfer1::Dims4{ -1, 3, 600, 600 });
+  auto resizeLayer = trt_network->addResize(*input);
+  resizeLayer->setOutputDimensions(trt_network->getInput(0)->getDimensions());
+  trt_network->markOutput(*resizeLayer->getOutput(0));
+
 
 
   (void)print_layer_info;
