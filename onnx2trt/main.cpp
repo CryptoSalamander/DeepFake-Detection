@@ -241,6 +241,11 @@ int main(int argc, char* argv[]) {
 
 
   (void)print_layer_info;
+  auto profile = trt_builder->createOptimizationProfile();
+  profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kMIN, nvinfer1::Dims4{ 0, 3, 600, 600 });
+  profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kOPT, nvinfer1::Dims4{ 32, 3, 600, 600 });
+  profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kMAX, nvinfer1::Dims4{ 200, 1, 1, 1 });
+  preprocessorConfig->addOptimizationProfile(profile);
   if( verbosity >= (int)nvinfer1::ILogger::Severity::kWARNING ) {
     cout << "Parsing model" << endl;
   }
