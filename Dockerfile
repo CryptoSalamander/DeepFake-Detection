@@ -31,6 +31,7 @@ RUN apt-get install libopenblas-dev liblapack-dev -y
 RUN apt-get install libx11-dev libgtk-3-dev -y
 RUN pip install dlib
 RUN pip install facenet-pytorch
+RUN pip install geffnet
 RUN conda install \
               pyhamcrest \
               cython \
