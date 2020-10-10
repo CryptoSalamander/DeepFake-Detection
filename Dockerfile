@@ -32,6 +32,8 @@ RUN apt-get install libx11-dev libgtk-3-dev -y
 RUN pip install dlib
 RUN pip install facenet-pytorch
 RUN pip install geffnet
+RUN pip install nvidia-pyindex==1.0.5
+RUN pip install tritonclient[all]
 RUN conda install \
               pyhamcrest \
               cython \
