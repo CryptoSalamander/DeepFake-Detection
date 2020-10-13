@@ -303,6 +303,8 @@ def isotropically_resize_image(img, size, interpolation_down=cv2.INTER_AREA, int
     resized = cv2.resize(img, (int(w), int(h)), interpolation=interpolation)
     return resized
 
+def to_numpy(tensor):
+    return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
 
 def predict_on_video(face_extractor, video_path, batch_size, input_size, models, strategy=np.mean,
                      apply_compression=False):
