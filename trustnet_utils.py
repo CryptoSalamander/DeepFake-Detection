@@ -371,3 +371,90 @@ def predict_on_video_set(face_extractor, videos, input_size, num_workers, test_d
         
     return results
 
+def predict_on_video_set_with_trt(face_extractor, videos, input_size, num_workers, test_dir, frames_per_video, models,
+                         strategy=np.mean,
+                         apply_compression=False):
+    with open(models, "rb") as f, trt.Runtime(TRT_LOGGER) as runtime:
+        engine = runtime.deserialize_cuda_engine(f.read())
+        def process_file(i):
+            filename = videos[i]
+            y_pred = predict_on_video_with_trt(face_extractor=face_extractor, video_path=os.path.join(test_dir, filename),
+                                      input_size=input_size,
+                                      batch_size=frames_per_video,
+                                     engine = engine, strategy=strategy, apply_compression=apply_compression)
+            return y_pred
+    
+        with ThreadPoolExecutor(max_workers=num_workers) as pool:
+        #with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            with tqdm(total=len(videos)) as progress:
+                futures = []
+                for video in range(len(videos)):
+                    future = pool.submit(process_file, video)
+                    future.add_done_callback(lambda x : progress.update())
+                    futures.append(future)
+
+                results = []
+                for future in futures:
+                    result = future.result()
+                    results.append(result)
+
+        return results
+
+def predict_on_video_with_trt(face_extractor, video_path, batch_size, input_size, engine, strategy=np.mean,
+                     apply_compression=False):
+    batch_size *= 4
+
+    try:
+        faces = face_extractor.process_video(video_path)
+        if len(faces) > 0:
+            x = np.zeros((batch_size, input_size, input_size, 3), dtype=np.uint8)
+            n = 0
+            for frame_data in faces:
+                for face in frame_data["faces"]:
+                    resized_face = isotropically_resize_image(face, input_size)
+                    resized_face = put_to_center(resized_face, input_size)
+                    if apply_compression:
+                        resized_face = image_compression(resized_face, quality=90, image_type=".jpg")
+                    if n + 1 < batch_size:
+                        x[n] = resized_face
+                        n += 1
+                    else:
+                        pass
+            if n > 0:
+                x = torch.tensor(x).float()
+                # Preprocess the images.
+                x = x.permute((0, 3, 1, 2))
+                for i in range(len(x)):
+                    x[i] = normalize_transform(x[i] / 255.)
+                # Make a prediction, then take the average.
+                x = x[:n]
+                x = np.ascontiguousarray(x)
+                output = np.empty(x.shape[0], dtype=np.float32)
+        cuda.init()
+        device = cuda.Device(0)
+        ctx = device.make_context()
+
+        d_input = cuda.mem_alloc(1 * x.nbytes)
+        d_output = cuda.mem_alloc(1 * output.nbytes)
+        bindings = [int(d_input), int(d_output)]
+
+        stream = cuda.Stream()
+        with engine.create_execution_context() as context:
+            context.get_binding_shape(0)
+            context.set_binding_shape(0, x.shape) #x.shape)
+            context.get_binding_shape(0)
+            cuda.memcpy_htod_async(d_input, x, stream)
+            context.execute_async_v2(bindings= bindings, stream_handle=stream.handle)
+            cuda.memcpy_dtoh_async(output, d_output, stream)
+            stream.synchronize()
+            print(output)
+            output = torch.FloatTensor(output)
+            output = torch.sigmoid(output.squeeze())
+            print(output)
+            ctx.pop()
+            return output
+    except Exception as e:
+        print("Prediction error on video %s: %s" % (video_path, str(e)))
+        
+    ctx.pop()
+    return 0.5
