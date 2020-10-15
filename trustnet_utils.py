@@ -306,6 +306,9 @@ def isotropically_resize_image(img, size, interpolation_down=cv2.INTER_AREA, int
 def to_numpy(tensor):
     return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
 
+def sigmoid(x):
+    return 1 / (1 +np.exp(-x))
+
 def predict_on_video(face_extractor, video_path, batch_size, input_size, models, strategy=np.mean,
                      apply_compression=False):
     batch_size *= 4
