@@ -461,3 +461,83 @@ def predict_on_video_with_trt(face_extractor, video_path, batch_size, input_size
         
     ctx.pop()
     return 0.5
+
+def predict_on_video_set_with_trustnet_api(face_extractor, videos, input_size, num_workers, test_dir, frames_per_video, trustnet_client, model_name,
+                         strategy=np.mean,
+                         apply_compression=False):
+        def process_file(i):
+            filename = videos[i]
+            y_pred = predict_on_video_with_trustnet_api(face_extractor=face_extractor, video_path=os.path.join(test_dir, filename),
+                                      input_size=input_size,
+                                      batch_size=frames_per_video,
+                                      trustnet_client=trustnet_client, model_name=model_name,strategy=strategy, apply_compression=apply_compression)
+            return y_pred
+    
+        with ThreadPoolExecutor(max_workers=num_workers) as pool:
+        #with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            with tqdm(total=len(videos)) as progress:
+                futures = []
+                for video in range(len(videos)):
+                    future = pool.submit(process_file, video)
+                    future.add_done_callback(lambda x : progress.update())
+                    futures.append(future)
+
+                results = []
+                for future in futures:
+                    result = future.result()
+                    results.append(result)
+
+        return results
+
+def predict_on_video_with_trustnet_api(face_extractor, video_path, batch_size, input_size, trustnet_client, model_name, strategy=np.mean,
+                     apply_compression=False):
+    batch_size *= 4
+
+    try:
+        s_time = time.time()
+        faces = face_extractor.process_video(video_path)
+        if len(faces) > 0:
+            x = np.zeros((batch_size, input_size, input_size, 3), dtype=np.uint8)
+            n = 0
+            for frame_data in faces:
+                for face in frame_data["faces"]:
+                    resized_face = isotropically_resize_image(face, input_size)
+                    resized_face = put_to_center(resized_face, input_size)
+                    if apply_compression:
+                        resized_face = image_compression(resized_face, quality=90, image_type=".jpg")
+                    if n + 1 < batch_size:
+                        x[n] = resized_face
+                        n += 1
+                    else:
+                        pass
+            if n > 0:
+                x = torch.tensor(x).float()
+                # Preprocess the images.
+                x = x.permute((0, 3, 1, 2))
+                for i in range(len(x)):
+                    x[i] = normalize_transform(x[i] / 255.)
+                # Make a prediction, then take the average.
+                x = x[:n]
+                x = np.ascontiguousarray(x)
+                print("Get X : ", time.time() - s_time)
+            
+                inputs = []
+                outputs = []
+                inputs.append(grpcclient.InferInput('input0', x.shape, "FP32"))
+                input0_data = x
+
+                inputs[0].set_data_from_numpy(input0_data)
+                outputs.append(grpcclient.InferRequestedOutput('output0'))
+
+                stime = time.time()
+                #print(type(trustnet_client))
+                results = trustnet_client.infer(model_name=model_name, inputs=inputs, outputs=outputs)
+                #print('Elapsed : ', time.time() - stime)
+                output0_data = results.as_numpy('output0')
+                output0_data = sigmoid(output0_data.squeeze())
+                return output0_data
+                
+    except Exception as e:
+        print("Prediction error on video %s: %s" % (video_path, str(e)))
+        
+    return 0.5
