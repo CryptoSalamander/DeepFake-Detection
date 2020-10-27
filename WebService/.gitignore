@@ -1,0 +1,5 @@
+__pycache__/
+.ipynb_checkpoints/
+
+_reset.sh
+youtube_reset.db
