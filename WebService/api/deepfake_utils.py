@@ -1,5 +1,6 @@
 import os
-
+import grpc
+import tritonclient.grpc as grpcclient
 import cv2
 import numpy as np
 import torch
@@ -197,6 +198,61 @@ class VideoReader:
 
         return frame
 
+# 
+class FastFaceExtractor:
+    def __init__(self, video_read_fn):
+        self.video_read_fn = video_read_fn
+        self.detector = MTCNN(margin=0, thresholds=[0.7, 0.8, 0.8], device="cuda")
+    
+    def getFrame(self, data):
+        idx, frame, my_idx = data
+        h, w = frame.shape[:2]
+        img = Image.fromarray(frame.astype(np.uint8))
+        img = img.resize(size=[s // 2 for s in img.size])
+
+        batch_boxes, probs = self.detector.detect(img, landmarks=False)
+
+        faces = []
+        scores = []
+        if batch_boxes is None: return dict()
+        for bbox, score in zip(batch_boxes, probs):
+            if bbox is not None:
+                xmin, ymin, xmax, ymax = [int(b * 2) for b in bbox]
+                w = xmax - xmin
+                h = ymax - ymin
+                p_h = h // 3
+                p_w = w // 3
+                crop = frame[max(ymin - p_h, 0):ymax + p_h, max(xmin - p_w, 0):xmax + p_w]
+                faces.append(crop)
+                scores.append(score)
+
+        frame_dict = {"video_idx": 0,
+                      "frame_idx": my_idx,
+                      "frame_w": w,
+                      "frame_h": h,
+                      "faces": faces,
+                      "scores": scores}
+        return frame_dict
+    
+    def process_video(self, video, max_workers=16):
+        result = self.video_read_fn(video)
+        
+        if result is None: return []
+        
+        my_frames, my_idxs = result
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = []
+            for i, frame in enumerate(my_frames):
+                future = pool.submit(self.getFrame, (i, frame, my_idxs[i]))
+                futures.append(future)
+            
+            for future in futures:
+                results.append(future.result())
+        
+        return results
+
+    
 
 class FaceExtractor:
     def __init__(self, video_read_fn):
@@ -368,4 +424,85 @@ def predict_on_video_set(face_extractor, videos, input_size, num_workers, test_d
                 results.append(result)
         
     return results
+
+def sigmoid(x):
+    return 1 / (1 +np.exp(-x))
+    
+def to_numpy(tensor):
+    return tensor.detach().cpu.numpy() if tensor.requires_grad else tensor.cpu().numpy()
+    
+def get_x(faces,batch_size):
+    input_size1 = 380
+    input_size2 = 416
+    input_size3 = 600
+    x1 = np.zeros((batch_size, input_size1, input_size1, 3), dtype=np.int8)
+    x2 = np.zeros((batch_size, input_size2, input_size2, 3), dtype=np.int8)
+    x3 = np.zeros((batch_size, input_size3, input_size3, 3), dtype=np.int8)
+
+    n = 0
+
+    for frame_data in faces:
+        for face in frame_data["faces"]:
+            resized_face1 = isotropically_resize_image(face, input_size1)
+            resized_face1 = put_to_center(resized_face1, input_size1)
+            resized_face2 = isotropically_resize_image(face, input_size2)
+            resized_face2 = put_to_center(resized_face2, input_size2)
+            resized_face3 = isotropically_resize_image(face, input_size3)
+            resized_face3 = put_to_center(resized_face3, input_size3)                
+            if n + 1 < batch_size:
+                x1[n] = resized_face1
+                x2[n] = resized_face2
+                x3[n] = resized_face3
+                n += 1
+            else:
+                pass
+
+    if n > 0:
+        x1 = torch.tensor(x1).float()
+        x2 = torch.tensor(x2).float()
+        x3 = torch.tensor(x3).float()
+
+    x1 = x1.permute((0, 3, 1, 2))
+    x2 = x2.permute((0, 3, 1, 2))
+    x3 = x3.permute((0, 3, 1, 2))
+    for i in range(len(x1)):
+        x1[i] = normalize_transform(x1[i] / 255.)
+        x2[i] = normalize_transform(x2[i] / 255.)
+        x3[i] = normalize_transform(x3[i] / 255.)
+
+    x1 = to_numpy(x1[:n])
+    x1 = np.ascontiguousarray(x1)
+    x2 = to_numpy(x2[:n])
+    x2 = np.ascontiguousarray(x2)
+    x3 = to_numpy(x3[:n])
+    x3 = np.ascontiguousarray(x3)
+    return x1,x2,x3
+
+def get_result(url, model_name, x):
+    try:
+        triton_client = grpcclient.InferenceServerClient(
+            url=url,
+            verbose=False,
+            ssl=False)
+        print("Channel creation success")
+    except Exception as e:
+        print("channel creation failed: " + str(e))
+
+    inputs = []
+    outputs = []
+    inputs.append(grpcclient.InferInput('input0', x.shape, "FP32"))
+    input0_data = x
+    print("X Shape : ", x.shape)
+    inputs[0].set_data_from_numpy(input0_data)
+    outputs.append(grpcclient.InferRequestedOutput('output0'))
+
+    results = triton_client.infer(model_name=model_name,
+                                  inputs=inputs,
+                                  outputs=outputs)
+    inputs[0].set_data_from_numpy(input0_data)
+    output0_data = results.as_numpy('output0')
+    output0_data = sigmoid(output0_data.squeeze())
+    print(output0_data)
+    result = np.mean(output0_data)
+    return output0_data
 
