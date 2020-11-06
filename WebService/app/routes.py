@@ -1,5 +1,7 @@
 import os
 import secrets
+import time
+import asyncio
 from PIL import Image
 from app import app, db
 from app.forms import RegistrationForm, LoginForm, UpdateAccountForm, VideoUploadForm, UpdateVideoForm, CommentForm
@@ -8,8 +10,10 @@ from flask import render_template, url_for, flash, redirect, request, abort
 from flask_login import login_user, current_user, logout_user, login_required
 from werkzeug.urls import url_parse
 
-from api.DeepFake import Detect
+from api.TrustNetAPI import Triton
 import pycuda.autoinit
+
+triton = Triton(DEBUG = True)
 
 # flash Options
 # https://getbootstrap.com/docs/4.0/components/alerts/
@@ -65,7 +69,8 @@ def login():
 @login_required
 def logout():
     logout_user()
-    return redirect(url_for('home'))
+    return redirect(url_for('login'))
+    #return redirect(url_for('home'))
 
 
 @app.route("/video/<int:id>", methods=['GET', 'POST'])
@@ -135,7 +140,7 @@ def save_video(form_video):
 
     form_video.save(video_path)
 
-    return video_fn
+    return video_fn, random_hex
 
 
 @app.route('/upload', methods=['GET', 'POST'])
@@ -148,18 +153,34 @@ def upload():
     # TODO : Check DeepFake
 
     if form.validate_on_submit():
-        video_file = save_video(form.video_content.data)
+        video_file, random_hex = save_video(form.video_content.data)
         
         video_path = "/".join(['./app/static/videos', video_file])
-        Result_DeepFake = Detect(video_path)
+
+        faces = triton.getFaces(video_path)
+
+        triton.run(faces)
+        Result_DeepFake, results, CAMList = triton.getResults()
+        
+        print("Ensembled DeepFake Probability {:.2f} %".format(results * 100))
+        
         if Result_DeepFake:
-            flash('DeepFake Detected !!!', 'danger')
+            triton.makeCAM(video_file, CAMList)
+            print("DeepFake Video Upload Attempt Found - ID : ", current_user.user_name)
+            flash('DeepFake Detected {:.2f} % !!!'.format(results * 100), 'danger')
             flash('Not uploaded', 'danger')
             os.remove(video_path)
-            return redirect(url_for('home'))
-
+            #move_to_deepfake_path = "/".join(['./app/static/videos/deepfakes', video_file])
+            #os.system(f"mv {video_path} {move_to_deepfake_path}")
+            imgs = []
+            for i in CAMList:
+                imgs.append(f"cam_{i}.png")
+            return render_template('CAM.html', title='DeepFake Found', images=imgs, id=f'{random_hex}.mp4')
+            #return redirect(url_for('home'))
+            
         video = Video(video_title=form.video_title.data, video_content=video_file,
                       description=form.description.data, category=form.category.data, author=current_user)
+        
         db.session.add(video)
         db.session.commit()
         flash('Your Video has been posted!', 'success')
