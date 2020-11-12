@@ -1,3 +1,6 @@
+# SW Maestro 11th Project - Team TrustNet
+
+
 ## Building docker image
 All libraries and enviroment is already configured with Dockerfile. It requires docker engine https://docs.docker.com/engine/install/ubuntu/ and  nvidia docker in your system https://github.com/NVIDIA/nvidia-docker.
 
