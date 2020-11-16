@@ -40,7 +40,7 @@
     height: 25% ;
     width: 96%;
     margin-left: 2%;
-    background-color: red;
+    background-color: blue;
 }
 
 .user-details{
@@ -191,6 +191,7 @@
 .home-page-videos{
     display:flex;
     flex-wrap: wrap;
+    min-height: 85%;
 }
 
 .home-video-box{
@@ -395,3 +396,27 @@
     width: 75%;
     margin-top: 2%;
 }
+
+.center {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  width: 50%;
+}
+
+.fit {
+    object-fit: cover;
+}
+
+/* ------------------------------------Loading----------------------------- */
+
+/*
+
+div#loading {
+    width: 35px;
+    height: 35px;
+    display: none;
+    background: url(../logo/trustNet.png) no-repeat;
+    cursor: wait;
+    }
+*/
