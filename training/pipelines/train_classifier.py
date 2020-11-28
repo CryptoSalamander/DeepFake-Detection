@@ -79,7 +79,9 @@ def main():
     arg('--fold', type=int, default=0)
     arg('--prefix', type=str, default='classifier_')
     arg('--data-dir', type=str, default="/mnt/sota/datasets/deepfake")
+    arg('--val-dir', type=str, default="../dfdc_train_all/dfdc_test")
     arg('--folds-csv', type=str, default='folds.csv')
+    arg('--val-folds-csv', type=str)
     arg('--crops-dir', type=str, default='crops')
     arg('--label-smoothing', type=float, default=0.01)
     arg('--logdir', type=str, default='logs')
@@ -128,7 +130,7 @@ def main():
     bce_best = 100
     start_epoch = 0
     batch_size = conf['optimizer']['batch_size']
-
+    print("Config Loaded")
     data_train = DeepFakeClassifierDataset(mode="train",
                                            oversample_real=not args.no_oversample,
                                            fold=args.fold,
@@ -140,6 +142,7 @@ def main():
                                            folds_csv=args.folds_csv,
                                            transforms=create_train_transforms(conf["size"]),
                                            normalize=conf.get("normalize", None))
+    print("train data Loaded")
     data_val = DeepFakeClassifierDataset(mode="val",
                                          fold=args.fold,
                                          padding_part=args.padding_part,
@@ -148,6 +151,7 @@ def main():
                                          folds_csv=args.folds_csv,
                                          transforms=create_val_transforms(conf["size"]),
                                          normalize=conf.get("normalize", None))
+    print("val data Loaded")
     val_data_loader = DataLoader(data_val, batch_size=batch_size * 2, num_workers=args.workers, shuffle=False,
                                  pin_memory=False)
     os.makedirs(args.logdir, exist_ok=True)
