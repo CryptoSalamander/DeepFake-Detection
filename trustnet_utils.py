@@ -1,21 +1,26 @@
 import os
-
+#import tensorrt as trt
 import cv2
+import traceback
 import numpy as np
+import time
 import torch
 from PIL import Image
 from tqdm import tqdm
 import time
+import grpc
+#import tritonclient.grpc as grpcclient
 from albumentations.augmentations.functional import image_compression
 from facenet_pytorch.models.mtcnn import MTCNN
-from concurrent.futures import ThreadPoolExecutor
-
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import torchvision.transforms as transforms
 from torchvision.transforms import Normalize
-
+#TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
 normalize_transform = Normalize(mean, std)
-
+DeNormalize = transforms.Compose([  Normalize(mean = [0., 0., 0. ], std = [1/0.229, 1/0.224, 1/0.225]),
+                                    Normalize(mean = [-0.485, -0.456,-0.406], std = [1., 1., 1.]), ])
 
 class VideoReader:
     """Helper class for reading one or more frames from a video file."""
@@ -47,12 +52,18 @@ class VideoReader:
                 you probably want to set it only on the first video
         """
         assert num_frames > 0
-
+#        r_time = time.time()
         capture = cv2.VideoCapture(path)
+#        print("VideoCapture : ", time.time() - r_time)
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        #should delete!
+        num_frames = int(frame_count/10)
+#        print(frame_count)
+#        print(num_frames)
         if frame_count <= 0: return None
 
         frame_idxs = np.linspace(0, frame_count - 1, num_frames, endpoint=True, dtype=np.int)
+        #print(frame_idxs)
         if jitter > 0:
             np.random.seed(seed)
             jitter_offsets = np.random.randint(-jitter, jitter, len(frame_idxs))
@@ -62,51 +73,51 @@ class VideoReader:
         capture.release()
         return result
 
-    def read_random_frames(self, path, num_frames, seed=None):
-        """Picks the frame indices at random.
+#     def read_random_frames(self, path, num_frames, seed=None):
+#         """Picks the frame indices at random.
 
-        Arguments:
-            path: the video file
-            num_frames: how many frames to read, -1 means the entire video
-                (warning: this will take up a lot of memory!)
-        """
-        assert num_frames > 0
-        np.random.seed(seed)
+#         Arguments:
+#             path: the video file
+#             num_frames: how many frames to read, -1 means the entire video
+#                 (warning: this will take up a lot of memory!)
+#         """
+#         assert num_frames > 0
+#         np.random.seed(seed)
 
-        capture = cv2.VideoCapture(path)
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        if frame_count <= 0: return None
+#         capture = cv2.VideoCapture(path)
+#         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+#         if frame_count <= 0: return None
 
-        frame_idxs = sorted(np.random.choice(np.arange(0, frame_count), num_frames))
-        result = self._read_frames_at_indices(path, capture, frame_idxs)
+#         frame_idxs = sorted(np.random.choice(np.arange(0, frame_count), num_frames))
+#         result = self._read_frames_at_indices(path, capture, frame_idxs)
 
-        capture.release()
-        return result
+#         capture.release()
+#         return result
 
-    def read_frames_at_indices(self, path, frame_idxs):
-        """Reads frames from a video and puts them into a NumPy array.
+#     def read_frames_at_indices(self, path, frame_idxs):
+#         """Reads frames from a video and puts them into a NumPy array.
 
-        Arguments:
-            path: the video file
-            frame_idxs: a list of frame indices. Important: should be
-                sorted from low-to-high! If an index appears multiple
-                times, the frame is still read only once.
+#         Arguments:
+#             path: the video file
+#             frame_idxs: a list of frame indices. Important: should be
+#                 sorted from low-to-high! If an index appears multiple
+#                 times, the frame is still read only once.
 
-        Returns:
-            - a NumPy array of shape (num_frames, height, width, 3)
-            - a list of the frame indices that were read
+#         Returns:
+#             - a NumPy array of shape (num_frames, height, width, 3)
+#             - a list of the frame indices that were read
 
-        Reading stops if loading a frame fails, in which case the first
-        dimension returned may actually be less than num_frames.
+#         Reading stops if loading a frame fails, in which case the first
+#         dimension returned may actually be less than num_frames.
 
-        Returns None if an exception is thrown for any reason, or if no
-        frames were read.
-        """
-        assert len(frame_idxs) > 0
-        capture = cv2.VideoCapture(path)
-        result = self._read_frames_at_indices(path, capture, frame_idxs)
-        capture.release()
-        return result
+#         Returns None if an exception is thrown for any reason, or if no
+#         frames were read.
+#         """
+#         assert len(frame_idxs) > 0
+#         capture = cv2.VideoCapture(path)
+#         result = self._read_frames_at_indices(path, capture, frame_idxs)
+#         capture.release()
+#         return result
 
     def _read_frames_at_indices(self, path, capture, frame_idxs):
         try:
@@ -129,7 +140,7 @@ class VideoReader:
                             print("Error retrieving frame %d from movie %s" % (frame_idx, path))
                         break
 
-                    frame = self._postprocess_frame(frame)
+#                    frame = self._postprocess_frame(frame)
                     frames.append(frame)
                     idxs_read.append(frame_idx)
 
@@ -143,44 +154,44 @@ class VideoReader:
                 print("Exception while reading movie %s" % path)
             return None
 
-    def read_middle_frame(self, path):
-        """Reads the frame from the middle of the video."""
-        capture = cv2.VideoCapture(path)
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        result = self._read_frame_at_index(path, capture, frame_count // 2)
-        capture.release()
-        return result
+#     def read_middle_frame(self, path):
+#         """Reads the frame from the middle of the video."""
+#         capture = cv2.VideoCapture(path)
+#         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+#         result = self._read_frame_at_index(path, capture, frame_count // 2)
+#         capture.release()
+#         return result
 
-    def read_frame_at_index(self, path, frame_idx):
-        """Reads a single frame from a video.
+#     def read_frame_at_index(self, path, frame_idx):
+#         """Reads a single frame from a video.
 
-        If you just want to read a single frame from the video, this is more
-        efficient than scanning through the video to find the frame. However,
-        for reading multiple frames it's not efficient.
+#         If you just want to read a single frame from the video, this is more
+#         efficient than scanning through the video to find the frame. However,
+#         for reading multiple frames it's not efficient.
 
-        My guess is that a "streaming" approach is more efficient than a
-        "random access" approach because, unless you happen to grab a keyframe,
-        the decoder still needs to read all the previous frames in order to
-        reconstruct the one you're asking for.
+#         My guess is that a "streaming" approach is more efficient than a
+#         "random access" approach because, unless you happen to grab a keyframe,
+#         the decoder still needs to read all the previous frames in order to
+#         reconstruct the one you're asking for.
 
-        Returns a NumPy array of shape (1, H, W, 3) and the index of the frame,
-        or None if reading failed.
-        """
-        capture = cv2.VideoCapture(path)
-        result = self._read_frame_at_index(path, capture, frame_idx)
-        capture.release()
-        return result
+#         Returns a NumPy array of shape (1, H, W, 3) and the index of the frame,
+#         or None if reading failed.
+#         """
+#         capture = cv2.VideoCapture(path)
+#         result = self._read_frame_at_index(path, capture, frame_idx)
+#         capture.release()
+#         return result
 
-    def _read_frame_at_index(self, path, capture, frame_idx):
-        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = capture.read()
-        if not ret or frame is None:
-            if self.verbose:
-                print("Error retrieving frame %d from movie %s" % (frame_idx, path))
-            return None
-        else:
-            frame = self._postprocess_frame(frame)
-            return np.expand_dims(frame, axis=0), [frame_idx]
+#     def _read_frame_at_index(self, path, capture, frame_idx):
+#         capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+#         ret, frame = capture.read()
+#         if not ret or frame is None:
+#             if self.verbose:
+#                 print("Error retrieving frame %d from movie %s" % (frame_idx, path))
+#             return None
+#         else:
+#             frame = self._postprocess_frame(frame)
+#             return np.expand_dims(frame, axis=0), [frame_idx]
 
     def _postprocess_frame(self, frame):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -212,7 +223,9 @@ class FaceExtractor:
             # Read the full-size frames from this video.
             filename = filenames[video_idx]
             video_path = os.path.join(input_dir, filename)
+            #ssstime = time.time()
             result = self.video_read_fn(video_path)
+            #print("Video Read : ", time.time() - ssstime)
             # Error? Then skip this video.
             if result is None: continue
 
@@ -223,15 +236,19 @@ class FaceExtractor:
 
             frames.append(my_frames)
             frames_read.append(my_idxs)
+            
+            mtcnn_t = 0
             for i, frame in enumerate(my_frames):
                 h, w = frame.shape[:2]
                 img = Image.fromarray(frame.astype(np.uint8))
                 img = img.resize(size=[s // 2 for s in img.size])
-
+#                stime = time.time()
                 batch_boxes, probs = self.detector.detect(img, landmarks=False)
+#                mtcnn_t += time.time() - stime
 
                 faces = []
                 scores = []
+#                sstime = time.time()
                 if batch_boxes is None:
                     continue
                 for bbox, score in zip(batch_boxes, probs):
@@ -252,7 +269,7 @@ class FaceExtractor:
                               "faces": faces,
                               "scores": scores}
                 results.append(frame_dict)
-
+#        print("MTCNN Elapesd : ", mtcnn_t)
         return results
 
     def process_video(self, video_path):
@@ -260,6 +277,59 @@ class FaceExtractor:
         input_dir = os.path.dirname(video_path)
         filenames = [os.path.basename(video_path)]
         return self.process_videos(input_dir, filenames, [0])
+
+class FastFaceExtractor:
+    def __init__(self, video_read_fn):
+        self.video_read_fn = video_read_fn
+        self.detector = MTCNN(margin=0, thresholds=[0.7, 0.8, 0.8], device="cuda")
+    
+    def getFrame(self, data):
+        idx, frame, my_idx = data
+        h, w = frame.shape[:2]
+        img = Image.fromarray(frame.astype(np.uint8))
+        img = img.resize(size=[s // 2 for s in img.size])
+
+        batch_boxes, probs = self.detector.detect(img, landmarks=False)
+
+        faces = []
+        scores = []
+        if batch_boxes is None: return dict()
+        for bbox, score in zip(batch_boxes, probs):
+            if bbox is not None:
+                xmin, ymin, xmax, ymax = [int(b * 2) for b in bbox]
+                w = xmax - xmin
+                h = ymax - ymin
+                p_h = h // 3
+                p_w = w // 3
+                crop = frame[max(ymin - p_h, 0):ymax + p_h, max(xmin - p_w, 0):xmax + p_w]
+                faces.append(crop)
+                scores.append(score)
+
+        frame_dict = {"video_idx": 0,
+                      "frame_idx": my_idx,
+                      "frame_w": w,
+                      "frame_h": h,
+                      "faces": faces,
+                      "scores": scores}
+        return frame_dict
+    
+    def process_video(self, video, max_workers=16):
+        result = self.video_read_fn(video)
+        
+        if result is None: return []
+        
+        my_frames, my_idxs = result
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = []
+            for i, frame in enumerate(my_frames):
+                future = pool.submit(self.getFrame, (i, frame, my_idxs[i]))
+                futures.append(future)
+            
+            for future in futures:
+                results.append(future.result())
+        
+        return results
 
 
 
@@ -287,6 +357,7 @@ def put_to_center(img, input_size):
     return image
 
 
+
 def isotropically_resize_image(img, size, interpolation_down=cv2.INTER_AREA, interpolation_up=cv2.INTER_CUBIC):
     h, w = img.shape[:2]
     if max(w, h) == size:
@@ -303,11 +374,6 @@ def isotropically_resize_image(img, size, interpolation_down=cv2.INTER_AREA, int
     resized = cv2.resize(img, (int(w), int(h)), interpolation=interpolation)
     return resized
 
-def to_numpy(tensor):
-    return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
-
-def sigmoid(x):
-    return 1 / (1 +np.exp(-x))
 
 def predict_on_video(face_extractor, video_path, batch_size, input_size, models, strategy=np.mean,
                      apply_compression=False):
@@ -338,13 +404,53 @@ def predict_on_video(face_extractor, video_path, batch_size, input_size, models,
                 with torch.no_grad():
                     preds = []
                     for model in models:
+                        #print("before Model~")
+                        #print(x[:n].shape)
                         y_pred = model(x[:n].half())
+                        #print(y_pred)
+                        #y_pred = model(x)
+                        #print("Correct One X[:n] shape")
+                        #print(x[:n].shape)
                         y_pred = torch.sigmoid(y_pred.squeeze())
-                        bpred = y_pred[:n].cpu().numpy()
-                        preds.append(strategy(bpred))
+                        #print(f"{video_path} : " + str(y_pred))
+                        #print("Correct One y_pred[:n]")
+                        #print(y_pred[:n])
+                        #print("N was")
+                        #print(n)
+                        if(n > 1):
+                            bpred = y_pred[:n].cpu().numpy()
+                            preds.append(strategy(bpred))
+                            #print("Normal bpred : ")
+                            #print(bpred)
+                            #print(type(bpred))
+                        elif(n == 1):
+#                            print("abnormal bpred : ")
+                            bpred = y_pred.cpu().numpy()
+#                             print(bpred)
+#                             print(type(bpred))
+                            bpred = np.mean(bpred)
+                            preds.append(bpred)
+#                             print("after np.mean")
+#                             print(bpred)
+#                             print(type(bpred))
+                        else:
+                            raise Exception
+                        #preds.append(strategy(bpred))
+#                         print("Correct strategy bpred : ")
+#                         print(strategy(bpred))
+#                         print(type(strategy(bpred)))
                     return np.mean(preds)
     except Exception as e:
         print("Prediction error on video %s: %s" % (video_path, str(e)))
+#         print("y_pred")
+#         print(y_pred)
+#         print(type(y_pred))
+#         print("n")
+#         print(n)
+#         print("x[:n]")
+#         print(x[:n])
+#         print(x[:n].shape)
+        traceback.print_exc()
         
     return 0.5
 
@@ -373,6 +479,12 @@ def predict_on_video_set(face_extractor, videos, input_size, num_workers, test_d
                 results.append(result)
         
     return results
+
+def to_numpy(tensor):
+    return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
+
+def sigmoid(x):
+    return 1 / (1 +np.exp(-x))
 
 def predict_on_video_set_with_trt(face_extractor, videos, input_size, num_workers, test_dir, frames_per_video, models,
                          strategy=np.mean,
@@ -462,6 +574,7 @@ def predict_on_video_with_trt(face_extractor, video_path, batch_size, input_size
     ctx.pop()
     return 0.5
 
+
 def predict_on_video_set_with_trustnet_api(face_extractor, videos, input_size, num_workers, test_dir, frames_per_video, trustnet_client, model_name,
                          strategy=np.mean,
                          apply_compression=False):
@@ -494,7 +607,7 @@ def predict_on_video_with_trustnet_api(face_extractor, video_path, batch_size, i
     batch_size *= 4
 
     try:
-        s_time = time.time()
+#        s_time = time.time()
         faces = face_extractor.process_video(video_path)
         if len(faces) > 0:
             x = np.zeros((batch_size, input_size, input_size, 3), dtype=np.uint8)
@@ -512,30 +625,30 @@ def predict_on_video_with_trustnet_api(face_extractor, video_path, batch_size, i
                         pass
             if n > 0:
                 x = torch.tensor(x).float()
-                # Preprocess the images.
                 x = x.permute((0, 3, 1, 2))
                 for i in range(len(x)):
                     x[i] = normalize_transform(x[i] / 255.)
-                # Make a prediction, then take the average.
                 x = x[:n]
                 x = np.ascontiguousarray(x)
-                print("Get X : ", time.time() - s_time)
-            
+                try:
+                    trustnet_client = grpcclient.InferenceServerClient(
+                        url="localhost:8001",
+                        verbose=False,
+                        ssl=False)
+                except Exception as e:
+                    print("channel creation failed: " + str(e))                
                 inputs = []
                 outputs = []
                 inputs.append(grpcclient.InferInput('input0', x.shape, "FP32"))
                 input0_data = x
-
                 inputs[0].set_data_from_numpy(input0_data)
                 outputs.append(grpcclient.InferRequestedOutput('output0'))
-
-                stime = time.time()
-                #print(type(trustnet_client))
                 results = trustnet_client.infer(model_name=model_name, inputs=inputs, outputs=outputs)
-                #print('Elapsed : ', time.time() - stime)
                 output0_data = results.as_numpy('output0')
                 output0_data = sigmoid(output0_data.squeeze())
-                return output0_data
+                print(output0_data)
+                result = np.mean(output0_data)
+                return result
                 
     except Exception as e:
         print("Prediction error on video %s: %s" % (video_path, str(e)))
