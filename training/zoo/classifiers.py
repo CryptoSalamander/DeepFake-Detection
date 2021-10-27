@@ -5,12 +5,14 @@ import torch
 from timm.models import skresnext50_32x4d
 from timm.models.dpn import dpn92, dpn131
 from timm.models.efficientnet import tf_efficientnet_b4_ns, tf_efficientnet_b3_ns, \
-    tf_efficientnet_b5_ns, tf_efficientnet_b2_ns, tf_efficientnet_b6_ns, tf_efficientnet_b7_ns, tf_efficientnet_l2_ns_475
+    tf_efficientnet_b5_ns, tf_efficientnet_b2_ns, tf_efficientnet_b6_ns,tf_efficientnet_b7_ns,tf_efficientnet_l2_ns_475, tf_efficientnet_l2_ns,tf_efficientnetv2_l_in21k, tf_efficientnetv2_l_in21ft1k, tf_efficientnetv2_m_in21k, tf_efficientnetv2_m_in21ft1k
 from timm.models.resnest import resnest200e, resnest269e
+from timm.models.vision_transformer import deit_base_distilled_patch16_384, deit_base_patch16_384
 from torch import nn
 from torch.nn.modules.dropout import Dropout
 from torch.nn.modules.linear import Linear
 from torch.nn.modules.pooling import AdaptiveAvgPool2d
+#from geffnet import tf_efficientnet_b7_ns
 encoder_params = {
     "dpn92": {
         "features": 2688,
@@ -60,10 +62,6 @@ encoder_params = {
         "features": 2304,
         "init_op": partial(tf_efficientnet_b6_ns, pretrained=True, drop_path_rate=0.4)
     },
-    "tf_efficientnet_l2_ns_475": {
-        "features": 5504,
-        "init_op": partial(tf_efficientnet_l2_ns_475, pretrained=True, drop_path_rate=0.4)
-    },
     "sk50": {
         "features": 2048,
         "init_op": partial(skresnext50_32x4d, pretrained=True)
@@ -75,7 +73,39 @@ encoder_params = {
     "resnest269e": {
         "features": 2048,
         "init_op": partial(resnest269e, pretrained=True)
-    }
+    },
+    "tf_efficientnet_l2_ns": {
+        "features": 2560,
+        "init_op": partial(tf_efficientnet_l2_ns, pretrained=True, drop_path_rate=0.2)
+    },
+    "tf_efficientnet_l2_ns_475": {
+        "features": 2560,
+        "init_op": partial(tf_efficientnet_l2_ns_475, pretrained=True, drop_path_rate=0.2)
+    },
+    "tf_efficientnetv2_l_in21k": {
+        "features": 1280,
+        "init_op": partial(tf_efficientnetv2_l_in21k, pretrained=True, drop_path_rate=0.2)
+    },
+    "tf_efficientnetv2_l_in21ft1k": {
+        "features": 1280,
+        "init_op": partial(tf_efficientnetv2_l_in21ft1k, pretrained=True, drop_path_rate=0.2)
+    },
+    "tf_efficientnetv2_m_in21k": {
+        "features": 1280,
+        "init_op": partial(tf_efficientnetv2_m_in21k, pretrained=True, drop_path_rate=0.2)
+    },
+    "tf_efficientnetv2_m_in21ft1k": {
+        "features": 1280,
+        "init_op": partial(tf_efficientnetv2_m_in21ft1k, pretrained=True, drop_path_rate=0.2)
+    },
+    "deit_base_distilled_patch16_384": {
+        "features": 768,
+        "init_op": partial(deit_base_distilled_patch16_384, pretrained=True, drop_path_rate=0.2)
+    }, 
+    "deit_base_patch16_384": {
+        "features": 768,
+        "init_op": partial(deit_base_patch16_384, pretrained=True, drop_path_rate=0.2)
+    },
 }
 
 
@@ -173,15 +203,79 @@ class DeepFakeClassifier(nn.Module):
         self.fc = Linear(encoder_params[encoder]["features"], 1)
 
     def forward(self, x):
+        # for train
+        f = open("/dataset/workspace/backup/deit_shape2.txt","a+")
+        f.write(str(x.shape))
+        f.write("forward begin\n")
         x = self.encoder.forward_features(x)
+        # for ONNX Export
+        #x = self.encoder.features(x)
+        f.write("before_avg_pool :" + str(x.shape))
         x = self.avg_pool(x).flatten(1)
+        f.write("after_avg_pool :" + str(x.shape))
         x = self.dropout(x)
         x = self.fc(x)
         return x
 
+class DeepFakeClassifierWithViT(nn.Module):
+    def __init__(self, encoder, dropout_rate=0.0) -> None:
+        super().__init__()
+        self.encoder = encoder_params[encoder]["init_op"]()
+        self.avg_pool = AdaptiveAvgPool2d((1, 1))
+        self.dropout = Dropout(dropout_rate)
+        self.fc = Linear(encoder_params[encoder]["features"], 1)
 
+    def forward(self, x):
+        # for train
+        f = open("/dataset/workspace/backup/new_deit_shape2.txt","a+")
+        f.write(str(x.shape))
+        f.write("forward begin\n")
+        x = self.encoder.forward_features(x)
+        f.write("after forward\n")
+        f.write(str(len(x)))
+        # for ONNX Export
+        #x = self.encoder.features(x)
+        #f.write("before fc :" + str(x.shape))
+        #x = self.avg_pool(x).flatten(1)
+        #f.write("after_avg_pool :" + str(x.shape))
+        #x = self.dropout(x)
+        x = self.fc(x)
+        return x
 
+class DeepFakeClassifierWithViTDis(nn.Module):
+    def __init__(self, encoder, dropout_rate=0.0) -> None:
+        super().__init__()
+        self.encoder = encoder_params[encoder]["init_op"]()
+        self.avg_pool = AdaptiveAvgPool2d((1, 1))
+        self.dropout = Dropout(dropout_rate)
+        self.fc = Linear(encoder_params[encoder]["features"], 1)
+        self.fc_dist = Linear(encoder_params[encoder]["features"], 1)
 
+    def forward(self, x):
+        # for train
+        f = open("/dataset/workspace/backup/new_deit_shape2.txt","a+")
+        x = self.encoder.forward_features(x)
+        if self.encoder.head_dist is not None:
+            x = list(x)
+            x[0] = self.dropout(x[0])
+            x[1] = self.dropout(x[1])
+            x = tuple(x)
+            x, x_dist = self.fc(x[0]), self.fc_dist(x[1])  # x must be a tuple
+            if self.encoder.training and not torch.jit.is_scripting():
+                # during inference, return the average of both classifier predictions
+                return x, x_dist
+            else:
+                return (x + x_dist) / 2
+        else:
+            x = self.fc(x)
+        return x
+        # for ONNX Export
+        #x = self.encoder.features(x)
+        #f.write("before fc :" + str(x.shape))
+        #x = self.avg_pool(x).flatten(1)
+        #f.write("after_avg_pool :" + str(x.shape))
+        #x = self.dropout(x)
+        
 class DeepFakeClassifierGWAP(nn.Module):
     def __init__(self, encoder, dropout_rate=0.5) -> None:
         super().__init__()
